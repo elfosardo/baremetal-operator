@@ -850,41 +850,15 @@ func (p *ironicProvisioner) GetFirmwareSettings(ctx context.Context, includeSche
 		return nil, nil, fmt.Errorf("could not get BIOS settings: %w", provisioner.ErrNeedsRegistration)
 	}
 
-	// Get the settings from Ironic via Gophercloud
-	var settingsList []nodes.BIOSSetting
-	var biosListErr error
-	if includeSchema {
-		opts := nodes.ListBIOSSettingsOpts{Detail: true}
-		settingsList, biosListErr = nodes.ListBIOSSettings(ctx, p.client, p.nodeID, opts).Extract()
-	} else {
-		settingsList, biosListErr = nodes.ListBIOSSettings(ctx, p.client, p.nodeID, nil).Extract()
-	}
+	// Decode the Ironic response without Gophercloud Extract(). Extract() round-trips
+	// JSON through float64 and fails on integer bounds at signed 64-bit maximum.
+	settingsList, biosListErr := listNodeBIOSSettings(ctx, p.client, p.nodeID, includeSchema)
 	if biosListErr != nil {
 		return nil, nil, fmt.Errorf("could not get BIOS settings for node %s: %w", p.nodeID, biosListErr)
 	}
 	p.log.Info("retrieved BIOS settings for node", "node", p.nodeID, "size", len(settingsList))
 
-	settings = make(map[string]string)
-	schema = make(map[string]metal3api.SettingSchema)
-
-	for _, v := range settingsList {
-		settings[v.Name] = v.Value
-
-		if includeSchema {
-			// add to schema
-			schema[v.Name] = metal3api.SettingSchema{
-				AttributeType:   v.AttributeType,
-				AllowableValues: v.AllowableValues,
-				LowerBound:      v.LowerBound,
-				UpperBound:      v.UpperBound,
-				MinLength:       v.MinLength,
-				MaxLength:       v.MaxLength,
-				ReadOnly:        v.ReadOnly,
-				Unique:          v.Unique,
-			}
-		}
-	}
-
+	settings, schema = firmwareSettingsFromBIOS(settingsList, includeSchema, p.log)
 	return settings, schema, nil
 }
 
